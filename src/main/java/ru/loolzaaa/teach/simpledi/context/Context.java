@@ -57,48 +57,28 @@ public class Context {
             }
 
             // Вторая итерация по списку классов-кандидатов рассматривает все оставшиеся классы,
-            // независимо от количества конструкторов, а также имеющихся у них аргументов
+            // независимо от количества конструкторов после сортировки их по зависимости друг от друга.
+            elementClasses.sort((o1, o2) -> {
+                Constructor<?> o1Constructor = getValidConstructor(o1);
+                //Теоретически невозможная ситуация т.к. лист содержит сами классы.
+                if (o1.equals(o2)) return 0;
+                if (Arrays.stream(o1Constructor.getParameterTypes()).anyMatch(aClass -> aClass.equals(o2))) {
+                    return 1;
+                } else {
+                    return -1;
+                }
+            });
             iterator = elementClasses.iterator();
             while (iterator.hasNext()) {
                 Class<?> cls = iterator.next();
-                if (cls.getConstructors().length == 1) {
-                    // При наличии единственного конструктора в классе-кандидате,
-                    // сперва необходимо получить для него бины-зависимости из контейнера,
-                    // которые будут внедрены в конструктор при помощи рефлексии
-                    // с целью создания нового бина с зависимостями
-                    Constructor<?> constructor = cls.getConstructors()[0];
-                    List<Object> parameters = getConstructorDependencies(constructor);
-                    createAndAddBeanToContainer(cls, constructor, parameters);
-                    iterator.remove();
-                } else {
-                    // В тех случаях, когда имеется более одного конструктора
-                    // производится поиск аннотации связывания ElementWire,
-                    // которая явно указывает конструктор для создания бина
-                    List<Constructor<?>> validConstructors = Arrays.stream(cls.getConstructors())
-                            .filter(c -> c.isAnnotationPresent(ElementWire.class))
-                            .collect(Collectors.toList());
-                    if (validConstructors.size() == 1) {
-                        // Если аннотация представлена на единственном конструкторе,
-                        // то сперва необходимо получить для него бины-зависимости из контейнера,
-                        // которые будут внедрены в конструктор при помощи рефлексии
-                        // с целью создания нового бина с зависимостями
-                        Constructor<?> constructor = validConstructors.get(0);
-                        List<Object> parameters = getConstructorDependencies(constructor);
-                        createAndAddBeanToContainer(cls, constructor, parameters);
-                        iterator.remove();
-                    } else if (validConstructors.size() == 0) {
-                        // В тех случаях, когда аннотация связывания отсутствует при наличии двух и более конструкторов
-                        // выбрасывается соответствующее исключение,
-                        // которое указывает на неоднозначночть выбора конструктора для связывания
-                        throw new IllegalArgumentException("There is more than one constructor in class " + cls +
-                                ", but ElementWire annotation did not found.");
-                    } else {
-                        // Аналогично, ошибкой является наличие аннотации связывания более чем у одного конструктора,
-                        // что также указывает на неоднозначность выбора конструктора для связывания
-                        throw new IllegalArgumentException("There is more than one constructor in class " + cls +
-                                " with ElementWire annotation.");
-                    }
-                }
+                // При наличии валидного конструктора в классе-кандидате,
+                // сперва необходимо получить для него бины-зависимости из контейнера,
+                // которые будут внедрены в конструктор при помощи рефлексии
+                // с целью создания нового бина с зависимостями
+                Constructor<?> constructor = getValidConstructor(cls);
+                List<Object> parameters = getConstructorDependencies(constructor);
+                createAndAddBeanToContainer(cls, constructor, parameters);
+                iterator.remove();
             }
             assert elementClasses.size() == 0;
         }
@@ -191,6 +171,43 @@ public class Context {
 
     private String getBeanClassName(Class<?> clazz) {
         return clazz.getSimpleName().substring(0, 1).toLowerCase() + clazz.getSimpleName().substring(1);
+    }
+
+    private Constructor<?> getValidConstructor(Class<?> clazz) {
+        Constructor<?> clazzConstructor;
+        if (clazz.getConstructors().length == 1) {
+            // При наличии единственного конструктора в классе-кандидате,
+            // сперва необходимо получить для него бины-зависимости из контейнера,
+            // которые будут внедрены в конструктор при помощи рефлексии
+            // с целью создания нового бина с зависимостями
+            clazzConstructor = clazz.getConstructors()[0];
+        } else {
+            // В тех случаях, когда имеется более одного конструктора
+            // производится поиск аннотации связывания ElementWire,
+            // которая явно указывает конструктор для создания бина
+            List<Constructor<?>> validConstructors = Arrays.stream(clazz.getConstructors())
+                    .filter(c -> c.isAnnotationPresent(ElementWire.class))
+                    .collect(Collectors.toList());
+            if (validConstructors.size() == 1) {
+                // Если аннотация представлена на единственном конструкторе,
+                // то сперва необходимо получить для него бины-зависимости из контейнера,
+                // которые будут внедрены в конструктор при помощи рефлексии
+                // с целью создания нового бина с зависимостями
+                clazzConstructor = validConstructors.get(0);
+            } else if (validConstructors.size() == 0) {
+                // В тех случаях, когда аннотация связывания отсутствует при наличии двух и более конструкторов
+                // выбрасывается соответствующее исключение,
+                // которое указывает на неоднозначночть выбора конструктора для связывания
+                throw new IllegalArgumentException("There is more than one constructor in class " + clazz +
+                        ", but ElementWire annotation did not found.");
+            } else {
+                // Аналогично, ошибкой является наличие аннотации связывания более чем у одного конструктора,
+                // что также указывает на неоднозначность выбора конструктора для связывания
+                throw new IllegalArgumentException("There is more than one constructor in class " + clazz +
+                        " with ElementWire annotation.");
+            }
+        }
+        return clazzConstructor;
     }
 
     // Получение бина из контейнера контекста
